@@ -2,10 +2,12 @@ import React, { useState, useMemo } from "react";
 import {
   LayoutGrid, Users, UtensilsCrossed, CalendarCheck, Receipt,
   MessageSquareWarning, LogOut, Search, Plus, Pencil, Trash2,
-  X, CheckCircle2, Circle, IndianRupee, TrendingUp, ChefHat, Lock
+  X, CheckCircle2, Circle, IndianRupee, TrendingUp, TrendingDown,
+  ChefHat, Lock, Bell, UserPlus
 } from "lucide-react";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
+  PieChart, Pie, Cell, Legend
 } from "recharts";
 
 /* ------------------------------------------------------------------ */
@@ -31,11 +33,44 @@ const THEME = `
     --sage-100:#E6EEE3;
     --rust-600:#A33B2C;
     --rust-100:#F4E1DC;
+    --maroon-100:#F1E1E3;
+    --brass-100:#FBEED2;
+    --slate-600:#3F5B6E;
+    --slate-100:#E3EAEE;
   }
+  html, body, #root{ height:100%; margin:0; }
   .mm-root{
     font-family: 'Source Sans 3', ui-sans-serif, system-ui, sans-serif;
     background: var(--paper-100);
     color: var(--ink-900);
+  }
+  .mm-app-shell{ height:100vh; overflow:hidden; }
+  .mm-sidebar-scroll{ overflow-y:auto; }
+  .mm-card-hover{ transition: box-shadow 0.2s ease, transform 0.2s ease; }
+  .mm-card-hover:hover{ box-shadow: 0 6px 20px rgba(62,18,24,0.10); transform: translateY(-2px); }
+  .mm-avatar{
+    width:36px; height:36px; border-radius:9999px;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Fraunces', serif; font-weight:600; font-size:14px;
+    background: var(--brass-500); color: var(--maroon-950);
+    flex-shrink:0;
+  }
+  .mm-icon-badge{
+    width:40px; height:40px; border-radius:9999px;
+    display:flex; align-items:center; justify-content:center;
+    flex-shrink:0;
+  }
+  .mm-trend-up{ color: var(--sage-600); }
+  .mm-trend-down{ color: var(--rust-600); }
+  .mm-bell-dot{
+    position:absolute; top:-2px; right:-2px;
+    width:9px; height:9px; border-radius:9999px;
+    background: var(--rust-600); border:2px solid #fff;
+  }
+  .mm-activity-icon{
+    width:32px; height:32px; border-radius:9999px;
+    display:flex; align-items:center; justify-content:center;
+    flex-shrink:0;
   }
   .mm-serif{
     font-family: 'Fraunces', 'Playfair Display', Georgia, serif;
@@ -218,7 +253,8 @@ const THEME = `
   .overflow-x-auto{ overflow-x:auto; }
   .overflow-y-auto{ overflow-y:auto; }
   .align-top{ vertical-align:top; }
-  button{ cursor:pointer; font:inherit; }
+  button{ cursor:pointer; font:inherit; background:none; border:none; text-align:inherit; color:inherit; appearance:none; -webkit-appearance:none; }
+  .mm-navitem{ width:100%; text-align:left; }
   input, select, textarea{ font:inherit; }
   table{ border-collapse:collapse; width:100%; }
   a{ color:inherit; }
@@ -320,24 +356,30 @@ function initMonthlyMeals(members) {
 /* ------------------------------------------------------------------ */
 /*  SMALL UI PRIMITIVES                                                */
 /* ------------------------------------------------------------------ */
-function StatCard({ icon: Icon, label, value, sub, accent }) {
+function StatCard({ icon: Icon, label, value, sub, accent, iconColor, trend }) {
+  const trendUp = trend && trend.direction === "up";
   return (
-    <div className="mm-ledger-card rounded-md p-4 flex flex-col gap-3">
+    <div className="mm-ledger-card mm-card-hover rounded-md p-4 flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <span className="text-xs mm-mono tracking-widest uppercase" style={{ color: "var(--ink-600)" }}>
           {label}
         </span>
-        <div
-          className="w-8 h-8 rounded-full flex items-center justify-center"
-          style={{ background: accent || "var(--sage-100)" }}
-        >
-          <Icon size={16} style={{ color: "var(--maroon-800)" }} />
+        <div className="mm-icon-badge" style={{ background: accent || "var(--sage-100)" }}>
+          <Icon size={17} style={{ color: iconColor || "var(--maroon-800)" }} />
         </div>
       </div>
       <div className="mm-serif text-3xl font-semibold" style={{ color: "var(--maroon-900)" }}>
         {value}
       </div>
-      {sub && <div className="text-xs" style={{ color: "var(--ink-400)" }}>{sub}</div>}
+      <div className="flex items-center justify-between">
+        {sub && <span className="text-xs" style={{ color: "var(--ink-400)" }}>{sub}</span>}
+        {trend && (
+          <span className={`text-xs font-semibold flex items-center gap-1 ${trendUp ? "mm-trend-up" : "mm-trend-down"}`}>
+            {trendUp ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+            {trend.value}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -436,6 +478,56 @@ function Login({ onLogin }) {
 /* ------------------------------------------------------------------ */
 /*  DASHBOARD                                                          */
 /* ------------------------------------------------------------------ */
+const PLAN_COLORS = {
+  "Full Mess": "var(--maroon-800)",
+  "Lunch + Dinner": "var(--brass-500)",
+  "Dinner Only": "var(--slate-600)",
+  "Breakfast Only": "var(--sage-600)",
+};
+
+function ActivityFeed({ complaints, members }) {
+  const items = useMemo(() => {
+    const fromComplaints = complaints.slice(0, 3).map((c) => ({
+      id: `c-${c.id}`,
+      icon: MessageSquareWarning,
+      color: c.status === "Open" ? "var(--rust-600)" : "var(--sage-600)",
+      bg: c.status === "Open" ? "var(--rust-100)" : "var(--sage-100)",
+      text: `${c.memberName} logged a complaint: "${c.subject}"`,
+      date: c.date,
+    }));
+    const fromMembers = members.slice(-2).map((m) => ({
+      id: `m-${m.id}`,
+      icon: UserPlus,
+      color: "var(--maroon-800)",
+      bg: "var(--maroon-100)",
+      text: `${m.name} joined on the ${m.plan} plan`,
+      date: m.joinDate,
+    }));
+    return [...fromComplaints, ...fromMembers]
+      .sort((a, b) => (a.date < b.date ? 1 : -1))
+      .slice(0, 5);
+  }, [complaints, members]);
+
+  return (
+    <div className="mm-ledger-card rounded-md p-5">
+      <h3 className="mm-serif text-lg font-semibold mb-4" style={{ color: "var(--maroon-900)" }}>Recent Activity</h3>
+      <div className="flex flex-col gap-4">
+        {items.map((item) => (
+          <div key={item.id} className="flex items-start gap-3">
+            <div className="mm-activity-icon" style={{ background: item.bg }}>
+              <item.icon size={15} style={{ color: item.color }} />
+            </div>
+            <div>
+              <p className="text-sm" style={{ color: "var(--ink-900)" }}>{item.text}</p>
+              <p className="text-xs mm-mono" style={{ color: "var(--ink-400)" }}>{item.date}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ members, attendanceToday, complaints, billing }) {
   const activeMembers = members.filter((m) => m.status === "Active").length;
   const presentToday = useMemo(() => {
@@ -456,6 +548,12 @@ function Dashboard({ members, attendanceToday, complaints, billing }) {
   const openComplaints = complaints.filter((c) => c.status === "Open").length;
   const today = DAYS[(new Date().getDay() + 6) % 7];
 
+  const planDistribution = useMemo(() => {
+    const counts = {};
+    members.forEach((m) => { counts[m.plan] = (counts[m.plan] || 0) + 1; });
+    return Object.entries(counts).map(([plan, count]) => ({ name: plan, value: count }));
+  }, [members]);
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -464,11 +562,36 @@ function Dashboard({ members, attendanceToday, complaints, billing }) {
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard icon={Users} label="Active Members" value={activeMembers} sub={`${members.length} total on record`} />
-        <StatCard icon={CalendarCheck} label="Meals Served Today" value={presentToday} sub="Across breakfast, lunch, dinner" accent="var(--paper-200)" />
-        <StatCard icon={IndianRupee} label="Revenue Collected" value={`Rs. ${revenue.toLocaleString()}`} sub="This billing cycle" />
-        <StatCard icon={Receipt} label="Pending Dues" value={`Rs. ${pendingDues.toLocaleString()}`} sub="Awaiting payment" accent="var(--rust-100)" />
-        <StatCard icon={MessageSquareWarning} label="Open Complaints" value={openComplaints} sub={`${complaints.length} total logged`} accent="var(--rust-100)" />
+        <StatCard
+          icon={Users} label="Active Members" value={activeMembers}
+          sub={`${members.length} total on record`}
+          accent="var(--maroon-100)" iconColor="var(--maroon-800)"
+          trend={{ direction: "up", value: "+2 this month" }}
+        />
+        <StatCard
+          icon={CalendarCheck} label="Meals Served Today" value={presentToday}
+          sub="Across breakfast, lunch, dinner"
+          accent="var(--brass-100)" iconColor="var(--brass-600)"
+          trend={{ direction: "up", value: "+6% vs avg" }}
+        />
+        <StatCard
+          icon={IndianRupee} label="Revenue Collected" value={`Rs. ${revenue.toLocaleString()}`}
+          sub="This billing cycle"
+          accent="var(--sage-100)" iconColor="var(--sage-600)"
+          trend={{ direction: "up", value: "+12% vs last" }}
+        />
+        <StatCard
+          icon={Receipt} label="Pending Dues" value={`Rs. ${pendingDues.toLocaleString()}`}
+          sub="Awaiting payment"
+          accent="var(--rust-100)" iconColor="var(--rust-600)"
+          trend={{ direction: "down", value: "-4% vs last" }}
+        />
+        <StatCard
+          icon={MessageSquareWarning} label="Open Complaints" value={openComplaints}
+          sub={`${complaints.length} total logged`}
+          accent="var(--slate-100)" iconColor="var(--slate-600)"
+          trend={{ direction: openComplaints > 1 ? "up" : "down", value: openComplaints > 1 ? "needs attention" : "under control" }}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -503,6 +626,39 @@ function Dashboard({ members, attendanceToday, complaints, billing }) {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="mm-ledger-card rounded-md p-5">
+          <h3 className="mm-serif text-lg font-semibold mb-2" style={{ color: "var(--maroon-900)" }}>Meal Plan Distribution</h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <PieChart>
+              <Pie
+                data={planDistribution}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={48}
+                outerRadius={72}
+                paddingAngle={3}
+              >
+                {planDistribution.map((entry) => (
+                  <Cell key={entry.name} fill={PLAN_COLORS[entry.name] || "var(--ink-400)"} />
+                ))}
+              </Pie>
+              <Tooltip contentStyle={{ borderRadius: 6, border: "1px solid var(--paper-300)", fontSize: 12 }} />
+              <Legend
+                verticalAlign="bottom"
+                height={36}
+                iconSize={9}
+                wrapperStyle={{ fontSize: 11, color: "var(--ink-600)" }}
+              />
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="lg:col-span-2">
+          <ActivityFeed complaints={complaints} members={members} />
         </div>
       </div>
     </div>
@@ -1019,11 +1175,14 @@ export default function MessManagementApp() {
     );
   }
 
+  const openComplaintsCount = complaints.filter((c) => c.status === "Open").length;
+  const initials = (adminName || "Admin").trim().slice(0, 2).toUpperCase();
+
   return (
-    <div className="mm-root min-h-screen flex">
+    <div className="mm-root mm-app-shell flex">
       <style>{THEME}</style>
 
-      <aside className="mm-sidebar w-64 shrink-0 hidden md:flex flex-col py-6 px-4">
+      <aside className="mm-sidebar mm-sidebar-scroll w-64 shrink-0 flex flex-col py-6 px-4">
         <div className="flex items-center gap-2 px-2 mb-8">
           <div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: "var(--brass-500)" }}>
             <ChefHat size={18} style={{ color: "var(--maroon-950)" }} />
@@ -1043,6 +1202,14 @@ export default function MessManagementApp() {
             >
               <item.icon size={17} />
               {item.label}
+              {item.key === "complaints" && openComplaintsCount > 0 && (
+                <span
+                  className="text-[10px] font-semibold rounded-full px-2 py-0.5"
+                  style={{ marginLeft: "auto", background: "var(--rust-600)", color: "#fff" }}
+                >
+                  {openComplaintsCount}
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -1050,9 +1217,12 @@ export default function MessManagementApp() {
         <div className="mt-auto pt-6">
           <div className="mm-stitch mb-4" />
           <div className="flex items-center justify-between px-1">
-            <div>
-              <p className="text-sm font-semibold" style={{ color: "#FBF3E7" }}>{adminName || "Admin"}</p>
-              <p className="text-[11px]" style={{ color: "#C9A98F" }}>Mess Administrator</p>
+            <div className="flex items-center gap-2.5">
+              <div className="mm-avatar">{initials}</div>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: "#FBF3E7" }}>{adminName || "Admin"}</p>
+                <p className="text-[11px]" style={{ color: "#C9A98F" }}>Mess Administrator</p>
+              </div>
             </div>
             <button onClick={() => setLoggedIn(false)} className="p-2 rounded hover:bg-white/10">
               <LogOut size={16} style={{ color: "var(--brass-300)" }} />
@@ -1063,32 +1233,24 @@ export default function MessManagementApp() {
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="flex items-center justify-between px-4 md:px-8 py-4 bg-white" style={{ borderBottom: "1px solid var(--paper-300)" }}>
-          <div className="md:hidden flex items-center gap-2">
-            <ChefHat size={18} style={{ color: "var(--maroon-800)" }} />
-            <span className="mm-serif font-semibold" style={{ color: "var(--maroon-900)" }}>Annapurna</span>
+          <div>
+            <h1 className="mm-serif text-lg font-semibold" style={{ color: "var(--maroon-900)" }}>
+              {NAV_ITEMS.find((n) => n.key === active)?.label}
+            </h1>
+            {active === "dashboard" && (
+              <p className="text-xs" style={{ color: "var(--ink-400)" }}>Welcome back, {adminName || "Admin"}</p>
+            )}
           </div>
-          <div className="hidden md:block" />
-          <div className="flex items-center gap-2 text-xs mm-mono" style={{ color: "var(--ink-400)" }}>
-            {new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+          <div className="flex items-center gap-4">
+            <div className="text-xs mm-mono" style={{ color: "var(--ink-400)" }}>
+              {new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+            </div>
+            <button className="relative p-2 rounded" style={{ background: "var(--paper-200)" }}>
+              <Bell size={16} style={{ color: "var(--maroon-800)" }} />
+              {openComplaintsCount > 0 && <span className="mm-bell-dot" />}
+            </button>
           </div>
         </header>
-
-        <nav className="md:hidden flex overflow-x-auto gap-1 px-3 py-2 bg-white mm-scroll" style={{ borderBottom: "1px solid var(--paper-300)" }}>
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.key}
-              onClick={() => setActive(item.key)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap"
-              style={{
-                background: active === item.key ? "var(--maroon-800)" : "var(--paper-200)",
-                color: active === item.key ? "#FBF3E7" : "var(--ink-600)",
-              }}
-            >
-              <item.icon size={14} />
-              {item.label}
-            </button>
-          ))}
-        </nav>
 
         <main className="flex-1 p-4 md:p-8 overflow-y-auto mm-scroll">
           {active === "dashboard" && (
